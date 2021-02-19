@@ -1,6 +1,6 @@
 ---
 title: "Crash analysis"
-author: "Team Crash"
+author: "Team Crash - Ron Hazen, Thomas Ogundipe, Shiva Narahari, Harshitha Galla, Mohammad Shaikh"
 date: "`r format(Sys.time(), '%d %B, %Y')`" 
 output: 
   html_document:
