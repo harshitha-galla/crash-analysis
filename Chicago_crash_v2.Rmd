@@ -1,0 +1,242 @@
+---
+title: "Crash analysis"
+author: "Team Crash"
+date: "`r format(Sys.time(), '%d %B, %Y')`" 
+output: 
+  html_document:
+    theme: flatly
+    toc: TRUE
+    toc_float: TRUE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, cache = F}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  error = TRUE,
+  warning= FALSE,
+  message= FALSE)
+```
+
+## Packages Installation
+
+Packages need to be install on the first run only, after that you can set eval = FALSE so knitr won't evaluate this chuck of code. 
+
+```{r packages, eval = FALSE}
+### Install usethis package to configure Github, tidyverse and summarytools also needed
+install.packages("usethis")
+install.packages("tidyverse")
+install.packages("summarytools")
+install.packages("lubridate")
+install.packages("date")
+install.packages("gmodels")
+
+```
+
+## Load Packages
+
+```{r load}
+library(usethis)
+library(tidyverse)
+library(summarytools)
+library(lubridate)
+library(date)
+library(gmodels)
+```
+
+
+## Import Datasets from CSV Files
+
+### Notes about the datasets: 
+
+#### Crash dataset: 
+* Crash data shows information about each traffic crash on city streets within the City of Chicago limits and under the jurisdiction of Chicago Police Department (CPD).
+* Data from E-Crash are available for some police districts in 2015, but citywide data are not available until September 2017.
+* As per Illinois statute, only crashes with a property damage value of $1,500 or more or involving bodily injury to any person(s) and that happen on a public roadway and that involve at least one moving vehicle, except bike dooring, are considered reportable crashes.
+
+#### People Dataset: 
+* This data contains information about people involved in a crash and if any injuries were sustained. This dataset should be used in combination with the traffic Crash and Vehicle dataset.
+* Person data can be linked with the Crash and Vehicle dataset using the “CRASH_RECORD_ID” field.
+
+#### Vehicles Dataset: 
+* This dataset contains information about vehicles (or units as they are identified in crash reports) involved in a traffic crash. This dataset should be used in conjunction with the traffic Crash and People dataset available in the portal. “Vehicle” information includes motor vehicle and non-motor vehicle modes of transportation, such as bicycles and pedestrians. 
+* Vehicle information can be linked back to Crash data using the “CRASH_RECORD_ID” field. Since this dataset is a combination of vehicles, pedestrians, and pedal cyclists not all columns are applicable to each record. Look at the Unit Type field to determine what additional data may be available for that record.
+
+1. Import crash, vehicles, and people datasets:
+
++ All datasets can be found at: [City of Chicago Data Portal]
+(https://data.cityofchicago.org/Transportation/Traffic-Crashes-Crashes/85ca-t3if)
+
+
+```{r import, echo = FALSE, eval = TRUE}
+crash <- read_csv ("Traffic_Crashes_-_Crashes.csv")
+
+crash <- crash %>% select (CRASH_RECORD_ID, CRASH_DATE,	POSTED_SPEED_LIMIT, TRAFFIC_CONTROL_DEVICE,	LIGHTING_CONDITION,	FIRST_CRASH_TYPE,	ROADWAY_SURFACE_COND,	CRASH_TYPE,	INTERSECTION_RELATED_I, NOT_RIGHT_OF_WAY_I,	 HIT_AND_RUN_I,	DAMAGE,  MOST_SEVERE_INJURY,	CRASH_HOUR,	CRASH_DAY_OF_WEEK, CRASH_MONTH)
+
+people <- read_csv("Traffic_Crashes_-_People.csv")
+
+ ###Summarize people data 
+
+ people <- people %>% select (PERSON_ID,	PERSON_TYPE,	CRASH_RECORD_ID,	VEHICLE_ID,	CRASH_DATE, SEX,	AGE, SAFETY_EQUIPMENT,	AIRBAG_DEPLOYED,	INJURY_CLASSIFICATION, PHYSICAL_CONDITION,
+BAC_RESULT,	'BAC_RESULT VALUE')
+
+
+vehicle <- read_csv("Traffic_Crashes_-_Vehicles (1).csv")
+
+vehicle <- vehicle %>% select (CRASH_UNIT_ID,	CRASH_RECORD_ID,	CRASH_DATE,	UNIT_NO,	UNIT_TYPE,	VEHICLE_ID,	MAKE,	MODEL,	VEHICLE_YEAR,	VEHICLE_TYPE)
+  
+```
+
+
+## Subset Crash data
+
+Note: Include only crashes in 2016 - Present by converting the CRASH_DATE field into a date formatted variable and filtering on date. 
+
+```{r recode, echo = FALSE}
+
+crash2 <- crash %>% 
+  separate(CRASH_DATE, into=c("CRASH_MONTH", "CRASH_DAY", "CRASH_YEAR"), extra = "drop", convert = FALSE, remove = FALSE)     %>%   unite(CRASH_YMD, CRASH_YEAR, CRASH_MONTH, CRASH_DAY, sep = "-", remove = FALSE) %>% 
+  mutate(CRASH_DATE_NUM = ymd(CRASH_YMD))  
+
+crash2 <- filter(crash2, CRASH_YMD > ymd('2015-12-31'))
+
+```
+
+## Create Crash_complete dataset
+
+### Joining people, vehicles, and crash into crash_complete 
+
+1. Subset the driver dataset to drivers
+2. Subset the vehicles dataset to drivers
+3. Join driver - vehicles by CRASH_RECORD_ID and VEHICLE_ID
+4. Join driver_car to crash2(limited to 2016+) by CRASH_RECORD_ID
+5. Recode the following varialbes prior to analysis: 
++ INJURY_CLASSIFICATION -> INJURY_YN
++ AGE -> AGE_CATEGORY
++ POSTED_SPEED_LIMIT -> POSTED_SPEED_LIMIT_CAT
++ VEHICLE_TYPE -> VEHICLE_TYPE_RECODE
+
+
+```{r people, echo = FALSE }
+driver <- filter(people, PERSON_TYPE == "DRIVER")
+
+vehicle2 <- filter(vehicle, UNIT_TYPE == "DRIVER")
+
+driver_car <- inner_join(driver, vehicle2, by  = c("CRASH_RECORD_ID" = "CRASH_RECORD_ID", "VEHICLE_ID" = "VEHICLE_ID", "CRASH_DATE" = "CRASH_DATE"))
+
+crash_complete <- inner_join(crash2, driver_car, by  = c("CRASH_RECORD_ID" = "CRASH_RECORD_ID"))
+
+crash_complete$INJURY_YN <- ifelse(crash_complete$INJURY_CLASSIFICATION == "NO INDICATION OF INJURY", 
+  c("NO INJURY"), c("INJURY"))
+
+crash_complete %>% 
+  
+summary(crash_complete$POSTED_SPEED_LIMIT)
+
+crash_complete <- crash_complete %>% mutate(AGE_CATEGORY = cut(AGE,
+                         breaks=c(0,24,29,39,49,59, Inf),
+                         include.lowest=TRUE,
+                         labels=c("a.<25","b.25-29","c.30-39","d.40-49","e.50-59","f.60+")))
+
+crash_complete <- crash_complete %>% mutate(POSTED_SPEED_LIMIT_CAT = cut(POSTED_SPEED_LIMIT,
+                         breaks=c(0,25,30,Inf),
+                         include.lowest=TRUE,
+                         labels=c("a.0-25","b.26-30","c.31+")))
+
+crash_complete <- crash_complete %>% mutate(VEHICLE_YEAR_RECODE = cut(VEHICLE_YEAR,
+                         breaks=c(1900,2005,2010,2015,2021),
+                         include.lowest=TRUE,
+                         labels=c("a.1900-2005", "b.2006-2010", "c.2011-2014", "d.2015-2021")))
+
+crash_complete <- crash_complete %>% mutate(VEHICLE_TYPE_RECODE = recode(VEHICLE_TYPE, 
+  "PASSENGER" = "PASSENGER",
+  "SPORT UTILITY VEHICLE (SUV)" = "SUV",
+  "UNKNOWN/NA" = "UNKNOWN/NA",
+  "PICKUP" = "PICKUP",
+   "TRUCK - SINGLE UNIT" = "TRUCK - SU",
+   "MOTORCYCLE (OVER 150CC)" = "MOTORCYCLE",
+   .default = "OTHER"))
+
+#summarytools::freq(crash_complete$AGE_CATEGORY)
+#summarytools::freq(crash_complete$VEHICLE_TYPE_RECODE)
+#summarytools::freq(crash_complete$INJURY_CLASSIFICATION,order = "freq")
+#summarytools::freq(crash_complete$INJURY_YN,order = "freq")
+#summarytools::freq(crash_complete$POSTED_SPEED_LIMIT_CAT)
+```
+
+
+## Review Datasets
+
+The Crash_complete dataset has 800K observations and 43 variables from vehicles, people and crashes. We won't be using all of them, but have kept some additional varialbes in for the time being until our exploration is complete. 
+
+```{r review}
+colnames(crash_complete)
+
+str(crash_complete)
+
+#dfSummary(crash_complete)
+```
+
+
+##Hypotheses we may want to explore include:
+
+
+1. First, some descriptives - are there days of the week, months, or times when a crash is more likely to occur
+  + crash month, crash day of the week, crash hour
+
+2. Are there specific factors which are associated with injuries that occur during a crash (Y/N) or the cost of damage that occurred:
+  + Examine the following factors: Injuries, sex, age, damage ($), vehicle type (recoded), 
+    person's physical condition (PHYSICAL_CONDITION), vehicle make, vehicle year
+
+3. Can we cluster some of these factors to better predict outcomes? 
+
+## Run Frequency Tables 
+
+```{r summarzie}
+
+freq(crash_complete$INJURY_YN)
+freq(crash_complete$SEX)
+freq(crash_complete$AGE_CATEGORY)
+freq(crash_complete$DAMAGE)
+freq(crash_complete$VEHICLE_TYPE_RECODE)
+freq(crash_complete$CRASH_DAY_OF_WEEK)
+freq(crash_complete$CRASH_MONTH)
+freq(crash_complete$PHYSICAL_CONDITION)
+freq(crash_complete$CRASH_HOUR)
+freq(crash_complete$POSTED_SPEED_LIMIT_CAT)
+freq(crash_complete$VEHICLE_YEAR_RECODE)
+
+#Need to recode the following variables
+#freq(crash_complete$MAKE)
+#freq(crash_complete$SAFETY_EQUIPMENT) 
+#freq(crash_complete$AIRBAG_DEPLOYED)
+#freq(crash_complete$FIRST_CRASH_TYPE)
+#freq(crash_complete$ROADWAY_SURFACE_COND  )
+       
+# table(crash_complete$CRASH_HOUR) %>% 
+# barplot(main="Hour Distribution",
+#    xlab="Hour")
+
+#CrossTable(crash_complete$AGE_CATEGORY, crash_complete$INJURY_YN, chisq = TRUE)
+#CrossTable(crash_complete$SEX, crash_complete$INJURY_YN, chisq = TRUE)
+#CrossTable(crash_complete$VEHICLE_TYPE_RECODE, crash_complete$INJURY_YN, chisq = TRUE)
+
+```
+
+
+
+## Plot data - Examine Injuries by specific variables
+
+```{r plots}
+sex <- crash_complete %>% group_by(SEX, INJURY_YN) %>% summarise(Crash_count = n()) %>% 
+ggplot(aes(x=SEX, y=Crash_count, fill = INJURY_YN)) + geom_bar(stat = 'identity')
+
+
+write.csv(crash_complete, 'crash_complete.csv')
+
+```
+
+
+
+End of file. 
